@@ -3,12 +3,13 @@ package com.example.musicplayer;
 import javafx.fxml.FXML;
 import javafx.scene.control.Button;
 import javafx.scene.control.ProgressBar;
-import javafx.scene.layout.VBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.control.TextField;
+import javafx.scene.media.Media;
+import javafx.scene.media.MediaPlayer;
 
 import java.io.File;
 import java.sql.Connection;
@@ -17,10 +18,9 @@ import java.sql.SQLException;
 import java.sql.*;
 
 import java.sql.ResultSet;
+import javafx.util.Duration;
 
 public class musicPlayerController {
-    @FXML
-    private VBox vboxMenu;
     @FXML
     private ComboBox<String> genero;
     @FXML
@@ -38,35 +38,128 @@ public class musicPlayerController {
     @FXML
     private Button btnPlay;
     @FXML
-    private Button btnNext;
-    @FXML
-    private Button btnAntes;
-    @FXML
     private ProgressBar progressBar;
     @FXML
     private TextField campoDeBusca;
     @FXML
-    private void playMusic(){
-    }
+    private Label tempoDecorrido;
     @FXML
-    private void previousMusic() {
-    }
+    private Label tempoRestante;
+    @FXML
+    private Label labelCaminho;
 
-    @FXML
-    private void pauseMusic() {
-    }
-
-    @FXML
-    private void nextMusic() {
-    }
-
-    @FXML
-    private void campoDeBusca() {
-    }
+    private MediaPlayer mediaPlayer;
+    private Duration duration;
+    private String ultimaMediaTocada;
+    private double ultimoTempoPausado;
 
     private final String url = "jdbc:mysql://localhost:3306/musicplayer";
     private final String user = "root";
     private final String psw = "";
+
+    @FXML
+    private void playMusic(){
+        String playMusica = labelCaminho.getText();
+        File file = new File(playMusica);
+        Media media = new Media(file.toURI().toString());
+
+        if (mediaPlayer == null || !playMusica.equals(ultimaMediaTocada)) {
+            if (mediaPlayer != null) {
+                mediaPlayer.stop();
+                mediaPlayer.dispose();
+            }
+            mediaPlayer = new MediaPlayer(media);
+            resetPlayer();
+            mediaPlayer.setOnReady(() -> {
+                if (ultimoTempoPausado > 0) {
+                    mediaPlayer.seek(new Duration(ultimoTempoPausado * 1000));
+                }
+                duration = mediaPlayer.getMedia().getDuration();
+                mediaPlayer.play();
+                updateProgressBar();
+            });
+            ultimaMediaTocada = playMusica;
+            ultimoTempoPausado = 0;
+        } else {
+            if (mediaPlayer.getStatus() == MediaPlayer.Status.PAUSED) {
+                mediaPlayer.play();
+            }
+        }
+        mediaPlayer.play();
+    }
+
+    @FXML
+    private void pauseMusic() {
+        if (mediaPlayer != null && mediaPlayer.getStatus() == MediaPlayer.Status.PLAYING) {
+            mediaPlayer.pause();
+            ultimoTempoPausado = mediaPlayer.getCurrentTime().toSeconds();
+        }
+    }
+
+    private void updateProgressBar() {
+        mediaPlayer.currentTimeProperty().addListener((observable, oldValue, newValue) -> {
+            Duration currentTime = mediaPlayer.getCurrentTime();
+            double progress = currentTime.toMillis() / duration.toMillis();
+            progressBar.setProgress(progress);
+
+            tempoDecorrido.setText(formatTime(currentTime));
+            tempoRestante.setText(formatTime(duration.subtract(currentTime)));
+        });
+    }
+
+    private String formatTime(Duration time){
+        int minutes = (int) time.toMinutes();
+        int seconds = (int) time.toSeconds() % 60;
+        return String.format("%d:%02d", minutes, seconds);
+    }
+
+    @FXML
+    private void campoDeBusca() {
+        String pesquisa = campoDeBusca.getText();
+
+        if (pesquisa != null) {
+            String query = "select musica.musica as musica_caminho, albuns.nome as album_nome, albuns.imagem as " +
+                    "album_imagem " +
+                    "from artista " +
+                    "join albuns on artista.id = albuns.artista_id " +
+                    "join musica on albuns.id = musica.album_id " +
+                    "where musica.nome = ?";
+
+            try (Connection connection = DriverManager.getConnection(url, user, psw);
+                 PreparedStatement statement = connection.prepareStatement(query)) {
+
+                statement.setString(1, pesquisa);
+
+                ResultSet resultSet = statement.executeQuery();
+
+                if (resultSet.next()) {
+                    String nomeAlbum = resultSet.getString("album_nome");
+                    String caminhoImagem = resultSet.getString("album_imagem");
+                    String caminhoMusica = resultSet.getString("musica_caminho");
+
+                    album.setText(nomeAlbum);
+                    try {
+                        Image image = new Image(new File(caminhoImagem).toURI().toString());
+                        imgAlbum.setImage(image);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                    labelCaminho.setText(caminhoMusica);
+                }
+
+                String nomeMusica = pesquisa;
+                musicaEmReproducao.setText(nomeMusica);
+                if (nomeMusica.equals(null)) {
+                    mediaPlayer.stop();
+                }
+
+
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
 
     @FXML
     private void onMenuHamburguerClicked() {
@@ -98,11 +191,15 @@ public class musicPlayerController {
         musica.setOnAction(event -> updateMusic());
 
         btnPlay.setOnAction(event -> playMusic());
-        btnAntes.setOnAction(event -> previousMusic());
         btnPause.setOnAction(event -> pauseMusic());
-        btnNext.setOnAction(event -> nextMusic());
         campoDeBusca.setOnAction(event -> campoDeBusca());
 
+    }
+
+    private void resetPlayer() {
+        progressBar.setProgress(0);
+        tempoDecorrido.setText(formatTime(Duration.ZERO));
+        tempoRestante.setText(formatTime(Duration.ZERO));
     }
 
     private Connection connect() {
@@ -125,11 +222,12 @@ public class musicPlayerController {
         String selectedMusica = musica.getValue();
 
         if (selectedArtista != null && selectedMusica != null) {
-            String query = "select albuns.nome as album_nome, albuns.imagem as album_imagem " +
+            String query = "select musica.musica as musica_caminho, albuns.nome as album_nome, albuns.imagem as " +
+                    "album_imagem " +
                     "from artista " +
                     "join albuns on artista.id = albuns.artista_id " +
                     "join musica on albuns.id = musica.album_id " +
-                    "where artista.nome = ? and musica.nome = ?";;
+                    "where artista.nome = ? and musica.nome = ?";
 
             try (Connection connection = DriverManager.getConnection(url, user, psw);
                  PreparedStatement statement = connection.prepareStatement(query)) {
@@ -142,6 +240,7 @@ public class musicPlayerController {
                 if (resultSet.next()) {
                     String nomeAlbum = resultSet.getString("album_nome");
                     String caminhoImagem = resultSet.getString("album_imagem");
+                    String caminhoMusica = resultSet.getString("musica_caminho");
 
                     album.setText(nomeAlbum);
                     try {
@@ -150,10 +249,15 @@ public class musicPlayerController {
                     } catch (Exception e){
                         e.printStackTrace();
                     }
+                    labelCaminho.setText(caminhoMusica);
                 }
 
                 String nomeMusica = selectedMusica;
                 musicaEmReproducao.setText(nomeMusica);
+                if (nomeMusica.equals(null)) {
+                    mediaPlayer.stop();
+                }
+
 
             } catch (SQLException e) {
                 e.printStackTrace();
@@ -234,35 +338,6 @@ public class musicPlayerController {
 
         } catch (SQLException e) {
             e.printStackTrace();
-        }
-    }
-    private void updateAlbum() {
-        String selectedArtista = artista.getValue();
-        String selectedMusica = musica.getValue();
-        System.out.println("ok");
-
-        if (selectedArtista != null && selectedMusica != null) {
-            String query = "SELECT imagem FROM albuns WHERE nome = ? AND artista_id IN " +
-                    "(SELECT id FROM artista WHERE nome = ?)";
-
-            try (Connection connection = DriverManager.getConnection(url, user, psw);
-                 PreparedStatement statement = connection.prepareStatement(query)) {
-
-                statement.setString(1, selectedMusica);
-                statement.setString(2, selectedArtista);
-
-                ResultSet resultSet = statement.executeQuery();
-
-                if (resultSet.next()) {
-                    String imagemPath = resultSet.getString("imagem");
-                    imgAlbum.setImage(new Image("file:" + imagemPath));
-                    System.out.println(musicaEmReproducao);
-                    musicaEmReproducao.setText(selectedMusica);
-                }
-
-            } catch (SQLException e) {
-                e.printStackTrace();
-            }
         }
     }
 }

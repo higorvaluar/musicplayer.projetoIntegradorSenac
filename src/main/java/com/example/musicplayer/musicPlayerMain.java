@@ -12,7 +12,7 @@ public class musicPlayerMain extends Application {
     public void start(Stage stage) throws IOException {
         FXMLLoader fxmlLoader = new FXMLLoader(musicPlayerMain.class.getResource("musicplayer.fxml"));
         Scene scene = new Scene(fxmlLoader.load());
-        stage.setTitle("Poorfy");
+        stage.setTitle("Music Player");
         stage.setScene(scene);
         stage.show();
     }
